@@ -139,7 +139,7 @@ class PcapParser
 
             if(self.watch === false && self.events.finished)
             {
-                this.events.finished();
+                self.events.finished();
             }
         });
     }
