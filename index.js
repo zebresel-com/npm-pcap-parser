@@ -29,6 +29,8 @@ class PcapParser
 
         this.fsWatcher          = null;
 
+        this.packetCount = 0;
+
         // start file watch
         if(this.watch)
         {
@@ -94,10 +96,11 @@ class PcapParser
             start: this.startByte
         });
 
-        console.log('start parsing data', this.startByte, this.buffer);
+        // clear buffer
+        this.buffer 	 = null;
 
-        // clear buffer if we are not watching a file
-        this.buffer = null;
+        // reset packet count 
+        this.packetCount = 0;
 
         var self = this;
 
@@ -116,10 +119,9 @@ class PcapParser
             }
             else
             {
-                self.buffer += data;
+                self.buffer = Buffer.concat([self.buffer, data]); // create new buffer with incoming data
             }
 
-            console.log('parsing data', self.startByte, self.buffer);
             while(self.parseData() === true){} // parse until false
         });
 
@@ -177,11 +179,12 @@ class PcapParser
                 // successfull parsed packet header? next state parse packet data
                 if(result === true)
                 {
-                    this.state = 2;
+                	this.state = 2;
                 }
                 break;
             case 2: // packet data
-                result = this.parsePacketData();
+
+            	result = this.parsePacketData();
 
                 // do callback if needed
                 if(this.events.packetdata)
@@ -198,6 +201,7 @@ class PcapParser
                 // successfull parsed packet data? next state parse packet data
                 if(result === true)
                 {
+                	++this.packetCount;
                     this.state = 1;
                 }
                 break;
@@ -397,10 +401,12 @@ class PcapParser
         // set frame body first
         this.lastPacketData.frameBody = {};
 
+        // frame body time
+        this.lastPacketData.frameBody.timestamp = this['convertString' + this.endianness](this.buffer.toString('hex', 24, 32));//this.buffer['readUInt' + this.endianness](24, 8, true);
+
         // beacon frame
         if(this.lastPacketData.frameControl.type === 0b00 && this.lastPacketData.frameControl.subtype === 0b1000)
         {
-            this.lastPacketData.frameBody.timestamp = this['convertString' + this.endianness](this.buffer.toString('hex', 24, 32));//this.buffer['readUInt' + this.endianness](24, 8, true);
             this.lastPacketData.frameBody.beaconInterval = this.buffer['readUInt' + this.endianness](32, 2, true);
 
             // byte 34,2 
