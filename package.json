@@ -1,0 +1,23 @@
+{
+  "name": "zb-pcap-parser",
+  "version": "0.1.0",
+  "description": "PCAP Parser for Network Packet with live file watching.",
+  "main": "index.js",
+  "dependencies": {
+    "fs": "0.0.1-security"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "github.com:zebresel-com/npm-pcap-parser.git"
+  },
+  "keywords": [
+    "pcap",
+    "parser",
+    "filewatch"
+  ],
+  "author": "Kristof Friess (k.friess@zebresel.com - Zebresel; http://www.zebresel.com)",
+  "license": "MIT"
+}
