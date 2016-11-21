@@ -4,7 +4,8 @@
   "description": "PCAP Parser for Network Packet with live file watching.",
   "main": "index.js",
   "dependencies": {
-    "fs": "0.0.1-security"
+    "fs": "0.0.1-security",
+    "sha1": "^1.1.1"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

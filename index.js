@@ -3,6 +3,7 @@
 
 var fs      = require('fs');
 var path    = require('path');
+var sha1    = require('sha1');
 
 const GLOBAL_HEADER_LENGTH = 24; // bytes - number of bytes of the pcap file header
 const PACKET_HEADER_LENGTH = 16; // bytes - number of bytes of the packet header
@@ -15,6 +16,7 @@ class PcapParser
         this.file       = opt.file;             // file to parse
         this.watch      = opt.watch || false;   // watch the file for changes?
         this.startByte  = opt.start || 0;       // the byte for starting reading the file
+        this.hash  		= opt.hash  || false;   // create hash over the packet
 
         this.buffer     = null;                 // is the file buffer used to read the data
         this.streamOpen = false;                // is used to define, when the stream to the files are open
@@ -281,7 +283,13 @@ class PcapParser
         // check buffer is filled with enouth data to parse the packet data
         if (this.buffer.length >= this.lastPacketHeader.capturedLength)
         {
-            var data = this.buffer.slice(0, this.lastPacketHeader.capturedLength);
+        	// check user will create hash over packet
+        	let packetHash = null;
+        	if(this.hash === true)
+        	{
+        		var data = this.buffer.slice(0, this.lastPacketHeader.capturedLength);
+        		this.lastPacketHeader.hashed = sha1(data.toString());
+        	}
 
             this.lastPacketData = {
                 frameControl:     this.parseFrameControl(),
