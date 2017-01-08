@@ -16,7 +16,7 @@ class PcapParser
         this.file       = opt.file;             // file to parse
         this.watch      = opt.watch || false;   // watch the file for changes?
         this.startByte  = opt.start || 0;       // the byte for starting reading the file
-        this.hash  		= opt.hash  || false;   // create hash over the packet
+        this.hash       = opt.hash  || false;   // create hash over the packet
 
         this.buffer     = null;                 // is the file buffer used to read the data
         this.streamOpen = false;                // is used to define, when the stream to the files are open
@@ -39,7 +39,6 @@ class PcapParser
             this.startWatch();
         }
     }
-
 
     on(event, method)
     {
@@ -99,7 +98,7 @@ class PcapParser
         });
 
         // clear buffer
-        this.buffer 	 = null;
+        this.buffer      = null;
 
         // reset packet count 
         this.packetCount = 0;
@@ -108,7 +107,7 @@ class PcapParser
 
         // on data check the buffer and extend startl length if file watchting
         stream.on('data', function(data){
-            
+
             // raise start bytes on file watching
             if(self.watch === true)
             {
@@ -158,7 +157,7 @@ class PcapParser
                 result = this.parseGlobalFileHeader();
 
                 // do callback if needed
-                if(this.events.fileheader)
+                if(result === true && this.events.fileheader)
                 {
                     this.events.fileheader(this.globalHeader);
                 }
@@ -173,7 +172,7 @@ class PcapParser
                 result = this.parsePacketHeader();
 
                 // do callback if needed
-                if(this.events.packetheader)
+                if(result == true && this.events.packetheader)
                 {
                     this.events.packetheader(this.lastPacketHeader);
                 }
@@ -181,21 +180,20 @@ class PcapParser
                 // successfull parsed packet header? next state parse packet data
                 if(result === true)
                 {
-                	this.state = 2;
+                    this.state = 2;
                 }
                 break;
             case 2: // packet data
-
-            	result = this.parsePacketData();
+                result = this.parsePacketData();
 
                 // do callback if needed
-                if(this.events.packetdata)
+                if(result === true && this.events.packetdata)
                 {
                     this.events.packetdata(this.lastPacketData);
                 }
 
                 // do callback if needed
-                if(this.events.packet)
+                if(result === true && this.events.packet)
                 {
                     this.events.packet(this.lastPacketHeader, this.lastPacketData);
                 }
@@ -203,7 +201,7 @@ class PcapParser
                 // successfull parsed packet data? next state parse packet data
                 if(result === true)
                 {
-                	++this.packetCount;
+                    ++this.packetCount;
                     this.state = 1;
                 }
                 break;
@@ -283,13 +281,26 @@ class PcapParser
         // check buffer is filled with enouth data to parse the packet data
         if (this.buffer.length >= this.lastPacketHeader.capturedLength)
         {
-        	// check user will create hash over packet
-        	let packetHash = null;
-        	if(this.hash === true)
-        	{
-        		var data = this.buffer.slice(0, this.lastPacketHeader.capturedLength);
-        		this.lastPacketHeader.hashed = sha1(data.toString());
-        	}
+            // check packet includes prism caputre header
+            // Source: http://www.martin.cc/linux/prism
+            var prismHeaderLength = 0;
+            if(this.buffer['readUInt32' + this.endianness](0, true) == 0x00000044)
+            {
+                // console.log('0x' + this['convertString' + this.endianness](this.buffer.toString('hex', 0, 4)));
+                // console.log('detected prism header')
+                prismHeaderLength = this.buffer['readUInt32' + this.endianness](4, true);
+
+                // remove prism caputre header
+                this.buffer = this.buffer.slice(prismHeaderLength);
+            }
+
+            // check user will create hash over packet
+            let packetHash = null;
+            if(this.hash === true)
+            {
+                var data = this.buffer.slice(0, this.lastPacketHeader.capturedLength);
+                this.lastPacketHeader.hashed = sha1(data.toString());
+            }
 
             this.lastPacketData = {
                 frameControl:     this.parseFrameControl(),
@@ -298,9 +309,8 @@ class PcapParser
             };
 
             this.parseAddresses();
-            this.parseFrameBody();
-
-            this.buffer = this.buffer.slice(this.lastPacketHeader.capturedLength);
+            this.parseFrameBody(this.lastPacketHeader.capturedLength - prismHeaderLength);
+            this.buffer = this.buffer.slice(this.lastPacketHeader.capturedLength - prismHeaderLength);
 
             return true;
         }
@@ -404,7 +414,7 @@ class PcapParser
         };
     }
 
-    parseFrameBody()
+    parseFrameBody(maxLength)
     {
         // set frame body first
         this.lastPacketData.frameBody = {};
@@ -421,7 +431,7 @@ class PcapParser
             this.parseCapabilityInformation();
 
             // parse body
-            this.parseVariableFrameBody();
+            this.parseVariableFrameBody(maxLength);
         }
     }
 
@@ -447,10 +457,10 @@ class PcapParser
         // 0... .... .... .... = Immediate Block Ack: Not Implemented
     }
 
-    parseVariableFrameBody()
+    parseVariableFrameBody(maxLength)
     {
         var startIndex = 36;
-        var maxLength = this.buffer.length - 4;
+        var count = 0;
 
         this.lastPacketData.frameBody.tags = [];
         for (var i = startIndex; i < maxLength; )
@@ -908,7 +918,10 @@ class PcapParser
                     //data.data = '0x'+value.toString(16);
             }
 
+            ++count;
+            
             this.lastPacketData.frameBody.tags.push(data);
+            this.lastPacketData.frameBody.numberOfTags = count;
 
             i += length + 2;
         }
