@@ -130,6 +130,11 @@ class PcapParser
         stream.on('error', function(err){
             self.streamOpen = false;
             console.log('Error on parse', err);
+
+            if(self.events.error)
+            {
+                self.events.error(err);
+            }
         });
         stream.on('end', function(){
             self.streamOpen = false;
