@@ -334,7 +334,7 @@ class PcapParser
         this.lastPacketPrismHeader = {};
         this.lastPacketPrismHeader.msgcode = this.buffer['readUInt32' + this.endianness](0, true);
         this.lastPacketPrismHeader.msglen = this.buffer['readUInt32' + this.endianness](4, true);
-        this.lastPacketPrismHeader.deviceName = this.buffer.toString('ascii', 8, 24);
+        this.lastPacketPrismHeader.deviceName = this.buffer.toString('ascii', 8, 24).replace(/\0/g, '');
 
         // parse DID until empty
         var maxLength = this.lastPacketPrismHeader.msglen;
@@ -347,7 +347,7 @@ class PcapParser
             did.did = this.buffer['readUInt32' + this.endianness](startIndex, true); startIndex += 4;
             did.status = this.buffer['readUInt16' + this.endianness](startIndex, true); startIndex += 2;
             did.length = this.buffer['readUInt16' + this.endianness](startIndex, true); startIndex += 2;
-            did.value = this.prasePrismDidValue(startIndex, did.length); startIndex += did.length;
+            did.value = this.prasePrismDidValue(did.did, startIndex, did.length); startIndex += 4;
 
             switch(did.did)
             {
@@ -389,11 +389,15 @@ class PcapParser
         }
     }
 
-    prasePrismDidValue(startIndex, length)
+    prasePrismDidValue(did, startIndex, length)
     {
         var value = null;
 
-        if(length === 1)
+        if(did === 0x00040044) // RSSI
+        {
+            value = this.buffer['readInt32' + this.endianness](startIndex, true);
+        }
+        else if(length === 1)
         {
             value = this.buffer['readUInt8' + this.endianness](startIndex, true);
         }
@@ -403,11 +407,11 @@ class PcapParser
         }
         else if(length === 4)
         {
-            value = this.buffer['readUInt32' + this.endianness](startIndex, true);   
+            value = this.buffer['readUInt32' + this.endianness](startIndex, true);
         }
-        else
+        else if(length > 0)
         {
-            value = this.buffer.toString('ascii', startIndex, length);
+            value = this.buffer.toString('ascii', startIndex, length).replace(/\0/g, '');
         }
 
         return value;
