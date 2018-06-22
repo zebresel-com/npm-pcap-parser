@@ -25,9 +25,10 @@ class PcapParser
         this.endianness = null;                 // endianness of the file (used for reading bytes in correct direction)
 
 
-        this.globalHeader       = null;         // stored the global header of the file after parsing
-        this.lastPacketHeader   = null;         // used to store the last parsed packet header
-        this.lastPacketData     = null;         // used to store the last parsed packet data
+        this.globalHeader          = null;         // stored the global header of the file after parsing
+        this.lastPacketPrismHeader = null;         // used to store the last parsed packet prism header
+        this.lastPacketHeader      = null;         // used to store the last parsed packet header
+        this.lastPacketData        = null;         // used to store the last parsed packet data
 
         this.fsWatcher          = null;
 
@@ -136,6 +137,7 @@ class PcapParser
                 self.events.error(err);
             }
         });
+
         stream.on('end', function(){
             self.streamOpen = false;
             console.log('Stopped parsing');
@@ -200,7 +202,7 @@ class PcapParser
                 // do callback if needed
                 if(result === true && this.events.packet)
                 {
-                    this.events.packet(this.lastPacketHeader, this.lastPacketData);
+                    this.events.packet(this.lastPacketHeader, this.lastPacketData, this.lastPacketPrismHeader);
                 }
 
                 // successfull parsed packet data? next state parse packet data
@@ -295,6 +297,9 @@ class PcapParser
                 // console.log('detected prism header')
                 prismHeaderLength = this.buffer['readUInt32' + this.endianness](4, true);
 
+                // start parsing prism
+                this.parsePrismHeader();
+
                 // remove prism caputre header
                 this.buffer = this.buffer.slice(prismHeaderLength);
             }
@@ -321,6 +326,91 @@ class PcapParser
         }
 
         return false;
+    }
+
+    parsePrismHeader()
+    {
+        // Source: https://www.tcpdump.org/linktypes/LINKTYPE_IEEE802_11_PRISM.html
+        this.lastPacketPrismHeader = {};
+        this.lastPacketPrismHeader.msgcode = this.buffer['readUInt32' + this.endianness](0, true);
+        this.lastPacketPrismHeader.msglen = this.buffer['readUInt32' + this.endianness](4, true);
+        this.lastPacketPrismHeader.deviceName = this.buffer.toString('ascii', 8, 24);
+
+        // parse DID until empty
+        var maxLength = this.lastPacketPrismHeader.msglen;
+        var startIndex = 24;
+        this.lastPacketPrismHeader.dids = [];
+
+        for ( ; startIndex < maxLength; )
+        {
+            var did = {};
+            did.did = this.buffer['readUInt32' + this.endianness](startIndex, true); startIndex += 4;
+            did.status = this.buffer['readUInt16' + this.endianness](startIndex, true); startIndex += 2;
+            did.length = this.buffer['readUInt16' + this.endianness](startIndex, true); startIndex += 2;
+            did.value = this.prasePrismDidValue(startIndex, did.length); startIndex += did.length;
+
+            switch(did.did)
+            {
+                case 0x00010044: // host time
+                    did.name = 'host time';
+                    break;
+                case 0x00020044: // MAC time
+                    did.name = 'MAC time';
+                    break;
+                case 0x00030044: // channel
+                    did.name = 'channel';
+                    break;
+                case 0x00040044: // RSSI
+                    did.name = 'rssi';
+                    break;
+                case 0x00050044: // signal quality
+                    did.name = 'signal quality';
+                    break;
+                case 0x00060044: // signal
+                    did.name = 'signal';
+                    break;
+                case 0x00070044: // noise
+                    did.name = 'noise';
+                    break;
+                case 0x00080044: // rate
+                    did.name = 'rate';
+                    break;
+                case 0x00090044: // transmitted frame indicator
+                    did.name = 'transmitted frame indicator';
+                    break;
+                case 0x000A0044: // frame length
+                    did.name = 'frame length';
+                    break;
+            }
+
+            this.lastPacketPrismHeader.dids.push(did);
+
+            console.log('start index', startIndex, maxLength);
+        }
+    }
+
+    prasePrismDidValue(startIndex, length)
+    {
+        var value = null;
+
+        if(length === 1)
+        {
+            value = this.buffer['readUInt8' + this.endianness](startIndex, true);
+        }
+        else if(length === 2)
+        {
+            value = this.buffer['readUInt16' + this.endianness](startIndex, true);   
+        }
+        else if(length === 4)
+        {
+            value = this.buffer['readUInt32' + this.endianness](startIndex, true);   
+        }
+        else
+        {
+            value = this.buffer.toString('ascii', startIndex, length);
+        }
+
+        return value;
     }
 
     parseFrameControl()
