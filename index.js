@@ -5,8 +5,32 @@ var fs      = require('fs');
 var path    = require('path');
 var sha1    = require('sha1');
 
+// @source: https://wiki.wireshark.org/Development/LibpcapFileFormat#Libpcap_File_Format
 const GLOBAL_HEADER_LENGTH = 24; // bytes - number of bytes of the pcap file header
 const PACKET_HEADER_LENGTH = 16; // bytes - number of bytes of the packet header
+
+const RADIOTAP_TYPES = {
+    TSFT: { bit:  1 << 0, alignment: 8, type: 'UInt'},
+    FLAGS: { bit:  1 << 1, alignment: 1, type: 'UInt'},
+    RATE: { bit:  1 << 2, alignment: 1, type: 'UInt'},
+    CHANNEL: { bit:  1 << 3, alignment: 2, type: 'UInt'},
+    CHANNEL_FLAGS: { bit:  1 << 3, alignment: 2, type: 'UInt'},
+    FHSS: { bit:  1 << 4, alignment: 1, type: 'UInt'},
+    DBM_ANTSIGNAL: { bit:  1 << 5, alignment: 1, type: 'Int'},
+    DBM_ANTNOISE: { bit:  1 << 6, alignment: 1, type: 'Int'},
+    LOCK_QUALITY: { bit:  1 << 7, alignment: 2, type: 'UInt'},
+    TX_ATTENUATION: { bit:  1 << 8, alignment: 2, type: 'UInt'},
+    DB_TX_ATTENUATION: { bit:  1 << 9, alignment: 2, type: 'UInt'},
+    DBM_TX_POWER: { bit:  1 << 10, alignment: 1, type: 'Int'},
+    ANTENNA: { bit:  1 << 11, alignment: 1, type: 'UInt'},
+    DB_ANTSIGNAL: { bit:  1 << 12, alignment: 1, type: 'UInt'},
+    DB_ANTNOISE: { bit:  1 << 13, alignment: 1, type: 'UInt'},
+    RX_FLAGS: { bit:  1 << 14, alignment: 2, type: 'UInt'},
+    TX_FLAGS: { bit:  1 << 15, alignment: 1, type: 'UInt'},
+    RTS_RETRIES: { bit:  1 << 16, alignment: 1, type: 'UInt'},
+    DATA_RETRIES: { bit:  1 << 17, alignment: 1, type: 'UInt'},
+    EXT: { bit:  1 << 31, alignment: 1, type: 'UInt'},
+};
 
 
 class PcapParser
@@ -26,7 +50,7 @@ class PcapParser
 
 
         this.globalHeader          = null;         // stored the global header of the file after parsing
-        this.lastPacketPrismHeader = null;         // used to store the last parsed packet prism header
+        this.lastPacketLinkLayer = null;         // used to store the last parsed packet prism header
         this.lastPacketHeader      = null;         // used to store the last parsed packet header
         this.lastPacketData        = null;         // used to store the last parsed packet data
 
@@ -202,7 +226,7 @@ class PcapParser
                 // do callback if needed
                 if(result === true && this.events.packet)
                 {
-                    this.events.packet(this.lastPacketHeader, this.lastPacketData, this.lastPacketPrismHeader);
+                    this.events.packet(this.lastPacketHeader, this.lastPacketData, this.lastPacketLinkLayer);
                 }
 
                 // successfull parsed packet data? next state parse packet data
@@ -288,20 +312,24 @@ class PcapParser
         // check buffer is filled with enouth data to parse the packet data
         if (this.buffer.length >= this.lastPacketHeader.capturedLength)
         {
-            // check packet includes prism caputre header
-            // Source: http://www.martin.cc/linux/prism
-            var prismHeaderLength = 0;
-            if(this.buffer['readUInt32' + this.endianness](0, true) == 0x00000044)
-            {
-                // console.log('0x' + this['convertString' + this.endianness](this.buffer.toString('hex', 0, 4)));
-                // console.log('detected prism header')
-                prismHeaderLength = this.buffer['readUInt32' + this.endianness](4, true);
+            // Link-layer header type values 
+            // @source: http://www.tcpdump.org/linktypes.html
+            // @source: https://wiki.wireshark.org/Development/LibpcapFileFormat#Libraries
+            
 
+            // check packet includes prism caputre header
+            // @source: http://www.martin.cc/linux/prism
+            var prismHeaderLength = 0;
+            if(this.globalHeader.linkLayerType === 119)
+            {
                 // start parsing prism
                 this.parsePrismHeader();
+            }
 
-                // remove prism caputre header
-                this.buffer = this.buffer.slice(prismHeaderLength);
+            // @source: http://www.radiotap.org/
+            else if(this.globalHeader.linkLayerType === 127)
+            {
+                this.parseRadioTap();
             }
 
             // check user will create hash over packet
@@ -314,13 +342,17 @@ class PcapParser
 
             this.lastPacketData = {
                 frameControl:     this.parseFrameControl(),
-                durationId:       this.buffer['readUInt16' + this.endianness](2, true),
-                sequenceControl:  this.praseSequenceControl(),
+                durationId:       this.buffer['readUInt16' + this.endianness](2, true)
             };
 
+            if( !(this.lastPacketData.frameControl.type === 1 && this.lastPacketData.frameControl.subtype === 13) )
+            {
+                this.lastPacketData.sequenceControl = this.praseSequenceControl();
+            }
+
             this.parseAddresses();
-            this.parseFrameBody(this.lastPacketHeader.capturedLength - prismHeaderLength);
-            this.buffer = this.buffer.slice(this.lastPacketHeader.capturedLength - prismHeaderLength);
+            this.parseFrameBody(this.lastPacketHeader.capturedLength - this.lastPacketLinkLayer.length);
+            this.buffer = this.buffer.slice(this.lastPacketHeader.capturedLength - this.lastPacketLinkLayer.length);
 
             return true;
         }
@@ -331,15 +363,16 @@ class PcapParser
     parsePrismHeader()
     {
         // Source: https://www.tcpdump.org/linktypes/LINKTYPE_IEEE802_11_PRISM.html
-        this.lastPacketPrismHeader = {};
-        this.lastPacketPrismHeader.msgcode = this.buffer['readUInt32' + this.endianness](0, true);
-        this.lastPacketPrismHeader.msglen = this.buffer['readUInt32' + this.endianness](4, true);
-        this.lastPacketPrismHeader.deviceName = this.buffer.toString('ascii', 8, 24).replace(/\0/g, '');
+        this.lastPacketLinkLayer = {};
+        this.lastPacketLinkLayer.msgcode = this.buffer['readUInt32' + this.endianness](0, true);
+        this.lastPacketLinkLayer.msglen = this.buffer['readUInt32' + this.endianness](4, true);
+        this.lastPacketLinkLayer.length = this.buffer['readUInt32' + this.endianness](4, true);
+        this.lastPacketLinkLayer.deviceName = this.buffer.toString('ascii', 8, 24).replace(/\0/g, '');
 
         // parse DID until empty
-        var maxLength = this.lastPacketPrismHeader.msglen;
+        var maxLength = this.lastPacketLinkLayer.msglen;
         var startIndex = 24;
-        this.lastPacketPrismHeader.dids = [];
+        this.lastPacketLinkLayer.dids = [];
 
         for ( ; startIndex < maxLength; )
         {
@@ -383,10 +416,63 @@ class PcapParser
                     break;
             }
 
-            this.lastPacketPrismHeader.dids.push(did);
-
-            console.log('start index', startIndex, maxLength);
+            this.lastPacketLinkLayer.dids.push(did);
         }
+
+
+        // remove link layer type header
+        this.buffer = this.buffer.slice(this.lastPacketLinkLayer.length);
+    }
+
+    parseRadioTap()
+    {
+        this.lastPacketLinkLayer = {};
+        this.lastPacketLinkLayer.header = {
+            version: this.buffer['readUInt' + this.endianness](0, 1, true),
+            pad: this.buffer['readUInt' + this.endianness](1, 1, true),
+            length: this.buffer['readUInt16' + this.endianness](2, 2, true),
+            present: this.buffer['readUInt32' + this.endianness](4, true)
+        };
+
+        this.lastPacketLinkLayer.length = this.lastPacketLinkLayer.header.length;
+
+        let headerLength = 8;
+        let presents = [this.lastPacketLinkLayer.present];
+        let lastPresent = this.lastPacketLinkLayer.present
+
+        // check present bit 31 is set?
+        while(lastPresent & RADIOTAP_TYPES.EXT.bit !== 0)
+        {
+            // additional it_present found
+            lastPresent = this.buffer['readUInt32' + this.endianness](headerLength, true); headerLength+=4;
+            presents.push(lastPresent);
+        }
+
+        if(presents.length > 1)
+        {
+            this.lastPacketLinkLayer.header.presents = presents;
+        }
+
+        this.lastPacketLinkLayer.data = {};
+
+        for(let key in RADIOTAP_TYPES)
+        {
+            if(key !== 'EXT' && (this.lastPacketLinkLayer.header.present & RADIOTAP_TYPES[key].bit) !== 0)
+            {
+                if(RADIOTAP_TYPES[key].alignment > 6)
+                {
+                    this.lastPacketLinkLayer.data[key] = '0x' + this['convertString' + this.endianness](this.buffer.toString('hex', headerLength, headerLength + RADIOTAP_TYPES[key].alignment));
+                }
+                else
+                {
+                    this.lastPacketLinkLayer.data[key] = this.buffer['read'+RADIOTAP_TYPES[key].type + this.endianness](headerLength, RADIOTAP_TYPES[key].alignment, true);
+                }
+                
+                headerLength+=RADIOTAP_TYPES[key].alignment;
+            }
+        }
+
+        this.buffer = this.buffer.slice(this.lastPacketLinkLayer.length);
     }
 
     prasePrismDidValue(did, startIndex, length)
@@ -1010,12 +1096,14 @@ class PcapParser
                 // 175–220 Reserved
                 // 222–255 Reserved
                 default:
-                    var value = this.buffer['readUInt' + this.endianness](i + 2 + length, length, true);
+                    
 
                     data.elementId = elementId;
-                    data.length = length;
                     //data.data = '0x'+value.toString(16);
             }
+
+            data.dataHex = '0x'+this.buffer.toString('hex', i + 2, i + 2 + length);
+            data.length = length;
 
             ++count;
             
