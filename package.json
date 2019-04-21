@@ -1,6 +1,6 @@
 {
   "name": "zb-pcap-parser",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "PCAP Parser for Network Packet with live file watching.",
   "main": "index.js",
   "dependencies": {
